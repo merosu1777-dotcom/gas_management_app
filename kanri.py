@@ -15,16 +15,28 @@ scope = ["https://spreadsheets.google.com/feeds",
 
 
 # ---- Cloud かローカルか判定 ----
-if "GSPREAD_SERVICE_ACCOUNT" in st.secrets:
-    creds_dict = dict(st.secrets["GSPREAD_SERVICE_ACCOUNT"])
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-else:
-    st.error(
-        "❌ 認証情報が見つかりません。Streamlit Cloud の secrets に GSPREAD_SERVICE_ACCOUNT を設定してください。")
-    st.stop()
+creds = None
 
-client = gspread.authorize(creds)
-sheet = client.open("ガソリン管理").sheet1
+try:
+    # ✅ Cloud 環境なら st.secrets を読む
+    if "GSPREAD_SERVICE_ACCOUNT" in st.secrets:
+        creds_dict = dict(st.secrets["GSPREAD_SERVICE_ACCOUNT"])
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(
+            creds_dict, scope)
+except Exception:
+    pass  # ローカルならここはスルー
+
+# ✅ ローカルなら service_account.json を探す
+if not creds and os.path.exists("service_account.json"):
+    creds = ServiceAccountCredentials.from_json_keyfile_name(
+        "service_account.json", scope)
+
+if not creds:
+    st.error(
+        "❌ 認証情報が見つかりません。Streamlit Cloud の secrets か、ローカルの service_account.json を設定してください。")
+else:
+    client = gspread.authorize(creds)
+    sheet = client.open("ガソリン管理").sheet1
 
 # バックアップシートの作成（存在しなければ作成）
 try:
@@ -219,7 +231,7 @@ if not df.empty:
 # ------------------編集・削除フォーム----------------
 st.markdown("""
 <h3>📝 データ編集・削除<br>
-<small style="color:gray;">(見つからない場合、自分の名前を選択し直してください)</small></h3>
+<small style="color:gray;">(見つからない場合、左上で自分の名前を選択し直してください)</small></h3>
 """, unsafe_allow_html=True)
 
 editable_rows = df[df["利用者"] == current_user].sort_values(["日付_dt", "作成時間_dt"])
