@@ -64,7 +64,7 @@ current_user = st.sidebar.selectbox(
 # 選びなおしたらセッションを更新
 st.session_state.current_user = current_user
 
-st.title("🚗 プリウス使用管理")
+st.title("🚗 プリウス\n      使用管理")
 
 # ------------------セッションステート（再読み込みが必要かどうか検討）----------------
 if "reload_flag" not in st.session_state:
@@ -97,8 +97,6 @@ with st.form("fuel_form", clear_on_submit=True):
     fuel = st.number_input("給油量(L)", value=0.0, format="%.2f")
     price = st.number_input("金額(円)", value=0, format="%d")
     
-    # 追加：給油レシートアップロード
-    receipt_file = st.file_uploader("給油レシート写真をアップロード（任意）", type=["png", "jpg", "jpeg"])
     submitted = st.form_submit_button("✅追加する")
 
 if submitted:
