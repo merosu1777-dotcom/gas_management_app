@@ -13,8 +13,11 @@ scope = ["https://spreadsheets.google.com/feeds",
          "https://www.googleapis.com/auth/drive.file",
          "https://www.googleapis.com/auth/drive"]
 
-# ---- Cloud かローカルか判定 ----
+
+#---- Cloud かローカルか判定 ----
 creds = None
+
+st.write("現在の secrets keys:", list(st.secrets.keys()))
 
 try:
     # ✅ Cloud 環境なら st.secrets を読む
