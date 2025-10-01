@@ -1,5 +1,7 @@
 import streamlit as st
 import gspread
+import json
+import os
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 from datetime import date, datetime, timedelta
@@ -11,8 +13,21 @@ scope = ["https://spreadsheets.google.com/feeds",
          "https://www.googleapis.com/auth/drive.file",
          "https://www.googleapis.com/auth/drive"]
 
-creds = ServiceAccountCredentials.from_json_keyfile_name(
-    "service_account.json", scope)
+# Cloudかローカルかを判定して認証
+creds = None
+
+# まずローカルのservice_account.jsonがあれば優先
+if os.path.exists("service_account.json"):
+    creds = ServiceAccountCredentials.from_json_keyfile_name(
+        "service_account.json", scope)
+# Cloud用のSecretsがある場合のみ使う
+elif st.secrets.get("GSPREAD_SERVICE_ACCOUNT") is not None:
+    creds_dict = st.secrets["GSPREAD_SERVICE_ACCOUNT"]
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+else:
+    st.error("⚠️ 認証情報が見つかりません。CloudではSecretsに、ローカルではservice_account.jsonを配置してください。")
+    st.stop()
+
 client = gspread.authorize(creds)
 sheet = client.open("ガソリン管理").sheet1
 
