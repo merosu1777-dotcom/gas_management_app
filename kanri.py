@@ -58,7 +58,7 @@ gauth = GoogleAuth()
 
 # 正しいクライアント情報（Google Cloud からDLしたやつ）
 credentials_dict = json.loads(st.secrets["GDRIVE_CREDENTIALS"]["json"])
-gauth.LoadClientConfigFile("credentials.json")
+gauth.LoadClientConfigFile(credentials_dict)
 
 
 # すでにトークンがあればロード
