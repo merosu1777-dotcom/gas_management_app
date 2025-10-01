@@ -2,15 +2,10 @@ import streamlit as st
 import gspread
 import json
 import os
-import io
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
 from datetime import date, datetime, timedelta
 import uuid
-
-# 画像アップロード用
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
 
 # -------------------Google Sheets 認証------------
 scope = ["https://spreadsheets.google.com/feeds",
@@ -52,24 +47,6 @@ except gspread.exceptions.WorksheetNotFound:
         title="バックアップ", rows=1000, cols=20)
     backup_sheet.append_row(["id", "日付", "利用者", "オドメーター開始", "オドメーター終了",
                              "走行距離", "給油量", "給油金額", "作成時間"])
-
-# -------------------Google Drive 認証-----------------
-gauth = GoogleAuth()
-
-# 正しいクライアント情報（Google Cloud からDLしたやつ）
-credentials_dict = json.loads(st.secrets["GDRIVE_CREDENTIALS"]["json"])
-gauth.LoadClientConfigFile(credentials_dict)
-
-
-# すでにトークンがあればロード
-gauth.LoadCredentialsFile("token.json")
-
-if gauth.credentials is None:
-    gauth.LocalWebserverAuth()  # 初回だけブラウザ認証
-    gauth.SaveCredentialsFile("token.json")
-
-drive = GoogleDrive(gauth)
-print("✅ Google Drive に接続できました")
 
 # -----------UI:利用者選択----------
 USER_LIST = ["梅三", "真由美", "悠斗", "淳斗"]
@@ -119,10 +96,9 @@ with st.form("fuel_form", clear_on_submit=True):
     odo_end = st.number_input("オドメーター終了値(km)", value=0, format="%d")
     fuel = st.number_input("給油量(L)", value=0.0, format="%.2f")
     price = st.number_input("金額(円)", value=0, format="%d")
-
+    
     # 追加：給油レシートアップロード
-    receipt_file = st.file_uploader(
-        "給油レシート写真をアップロード", type=["png", "jpg", "jpeg"])
+    receipt_file = st.file_uploader("給油レシート写真をアップロード（任意）", type=["png", "jpg", "jpeg"])
     submitted = st.form_submit_button("✅追加する")
 
 if submitted:
@@ -131,34 +107,6 @@ if submitted:
         distance = odo_end - odo_start
         row_id = str(uuid.uuid4())
         timestamp = datetime.now().isoformat(timespec='seconds')
-
-        receipt_url = ""
-        if receipt_file:
-            # 一時保存
-            tmp_path = f"tmp_{row_id}_{receipt_file.name}"
-            with open(tmp_path, "wb") as f:
-                f.write(receipt_file.getbuffer())
-
-            # Google Drive にアップロード
-            gfile = drive.CreateFile({'title': receipt_file.name})
-            gfile.SetContentFile(tmp_path)
-            gfile.Upload()
-            gfile.InsertPermission(
-                {'type': 'anyone', 'value': 'anyone', 'role': 'reader'})
-            receipt_url = gfile['webContentLink']
-
-            # BytesIOに読み込んでから閉じる
-            with open(tmp_path, "rb") as f:
-                img_bytes = io.BytesIO(f.read())
-
-            st.image(img_bytes, width=200)
-
-            # 🔹 try/except で削除
-            try:
-                os.remove(tmp_path)
-            except PermissionError:
-                pass  # ファイルがまだ使われていたら無視
-
         # 日付は文字列で保存（YYYY-MM-DD）
         sheet.append_row([
             row_id,
@@ -188,9 +136,6 @@ def load_data(flag):
 
 
 df = load_data(st.session_state.reload_flag)
-
-if "receipt_url" not in df.columns:
-    df["receipt_url"] = ""
 
 if not df.empty:
     # 列名を日本語に統一
@@ -238,18 +183,6 @@ if not df.empty:
                                  & group["前回オドメーター終了"].notna()]
             if not invalid_rows.empty:
                 st.warning(f"⚠️ {period} の記録でオドメーターが前回終了値とつながっていない行があります。")
-
-            # 月次精算レポート内の写真サムネ表示（横並びグリッド）
-            photos = [row["receipt_url"]
-                      for _, row in group.iterrows() if row.get("receipt_url")]
-            if photos:
-                st.markdown("**📸 今月アップロードされたレシート写真**")
-                cols_per_row = 4  # 横に並べる枚数
-                for i in range(0, len(photos), cols_per_row):
-                    cols = st.columns(cols_per_row)
-                    for j, photo_url in enumerate(photos[i:i+cols_per_row]):
-                        with cols[j]:
-                            st.image(photo_url, width=150)
 
             # 月内データ表示（テーブル）
             group_display = group.sort_values("日付_dt").copy()
@@ -332,54 +265,27 @@ else:
                         </style>
                     """, unsafe_allow_html=True)
 
-                    if row["receipt_url"]:
-                        st.image(row["receipt_url"], width=150)
-                    new_file = st.file_uploader(
-                        "新しいレシートに差し替え（任意）", type=["png", "jpg", "jpeg"])
-
-                    # フォーム内で更新・削除
-                    update_btn = st.form_submit_button("🔄 更新")
-                    delete_btn = st.form_submit_button("🗑️ 削除")
-
-                    if update_btn:
+                    if st.form_submit_button("🔄 更新"):
                         if edit_odo_end > edit_odo_start:
-                            # バックアップ
+                            # バックアップと更新処理（前回コードのまま）
                             backup_row = [
                                 row["id"],
-                                row["日付"].strftime("%Y-%m-%d") if isinstance(row["日付"],
-                                                                             (date, datetime)) else row["日付"],
+                                row["日付"].strftime(
+                                    "%Y-%m-%d") if isinstance(row["日付"], (date, datetime)) else row["日付"],
                                 row["利用者"],
                                 row["オドメーター開始"],
                                 row["オドメーター終了"],
                                 row["走行距離"],
                                 row["給油量"],
                                 row["給油金額"],
-                                row["作成時間"],
-                                row.get("receipt_url", "")
+                                row["作成時間"]
                             ]
                             backup_sheet.append_row(backup_row)
-
                             cell = sheet.find(row['id'])
                             if cell:
+                                row_number = cell.row
                                 distance = edit_odo_end - edit_odo_start
-                                receipt_url = row.get("receipt_url", "")
-
-                                # 新しいファイルがあれば差し替え
-                                if new_file:
-                                    tmp_path = f"tmp_{row['id']}_{new_file.name}"
-                                    with open(tmp_path, "wb") as f:
-                                        f.write(new_file.getbuffer())
-                                    gfile = drive.CreateFile(
-                                        {'title': new_file.name})
-                                    gfile.SetContentFile(tmp_path)
-                                    gfile.Upload()
-                                    gfile.InsertPermission(
-                                        {'type': 'anyone', 'value': 'anyone', 'role': 'reader'})
-                                    receipt_url = gfile['webContentLink']
-                                    os.remove(tmp_path)
-
-                                # Sheets 更新
-                                sheet.update(f'B{cell.row}:H{cell.row}', [[
+                                sheet.update(f'B{row_number}:H{row_number}', [[
                                     edit_date.strftime("%Y-%m-%d"),
                                     current_user,
                                     edit_odo_start,
@@ -388,32 +294,29 @@ else:
                                     edit_fuel,
                                     edit_price
                                 ]])
-                                sheet.update(f'J{cell.row}', receipt_url)
-                                st.success("記録を更新しました！")
+                                st.success("記録を更新しました!（webを更新してください）")
                                 st.session_state.reload_flag = not st.session_state.reload_flag
                             else:
                                 st.error("記録が見つかりません。更新できません。")
                         else:
                             st.error("オドメーター終了は開始より大きい値を入力してください。")
 
-                    if delete_btn:
-                        # バックアップ
+                    if st.form_submit_button("🗑️ 削除"):
                         backup_row = [
                             row["id"],
-                            row["日付"].strftime("%Y-%m-%d") if isinstance(row["日付"],
-                                                                         (date, datetime)) else row["日付"],
+                            row["日付"].strftime(
+                                "%Y-%m-%d") if isinstance(row["日付"], (date, datetime)) else row["日付"],
                             row["利用者"],
                             row["オドメーター開始"],
                             row["オドメーター終了"],
                             row["走行距離"],
                             row["給油量"],
                             row["給油金額"],
-                            row["作成時間"],
-                            row.get("receipt_url", "")
+                            row["作成時間"]
                         ]
                         backup_sheet.append_row(backup_row)
-
                         cell = sheet.find(row['id'])
                         sheet.delete_rows(cell.row)
                         st.warning("記録を削除しました。(更新してください)")
                         st.session_state.reload_flag = not st.session_state.reload_flag
+        
