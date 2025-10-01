@@ -14,31 +14,17 @@ scope = ["https://spreadsheets.google.com/feeds",
          "https://www.googleapis.com/auth/drive"]
 
 
-#---- Cloud かローカルか判定 ----
-creds = None
-
-st.write("現在の secrets keys:", list(st.secrets.keys()))
-
-try:
-    # ✅ Cloud 環境なら st.secrets を読む
-    if "GSPREAD_SERVICE_ACCOUNT" in st.secrets:
-        creds_dict = dict(st.secrets["GSPREAD_SERVICE_ACCOUNT"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(
-            creds_dict, scope)
-except Exception:
-    pass  # ローカルならここはスルー
-
-# ✅ ローカルなら service_account.json を探す
-if not creds and os.path.exists("service_account.json"):
-    creds = ServiceAccountCredentials.from_json_keyfile_name(
-        "service_account.json", scope)
-
-if not creds:
-    st.error(
-        "❌ 認証情報が見つかりません。Streamlit Cloud の secrets か、ローカルの service_account.json を設定してください。")
+# ---- Cloud かローカルか判定 ----
+if "GSPREAD_SERVICE_ACCOUNT" in st.secrets:
+    creds_dict = dict(st.secrets["GSPREAD_SERVICE_ACCOUNT"])
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
 else:
-    client = gspread.authorize(creds)
-    sheet = client.open("ガソリン管理").sheet1
+    st.error(
+        "❌ 認証情報が見つかりません。Streamlit Cloud の secrets に GSPREAD_SERVICE_ACCOUNT を設定してください。")
+    st.stop()
+
+client = gspread.authorize(creds)
+sheet = client.open("ガソリン管理").sheet1
 
 # バックアップシートの作成（存在しなければ作成）
 try:
