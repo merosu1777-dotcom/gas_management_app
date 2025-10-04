@@ -64,7 +64,7 @@ current_user = st.sidebar.selectbox(
 # 選びなおしたらセッションを更新
 st.session_state.current_user = current_user
 
-st.title("🚗 プリウス\n      使用管理")
+st.title("🚗 プリウス使用管理")
 
 # ------------------セッションステート（再読み込みが必要かどうか検討）----------------
 if "reload_flag" not in st.session_state:
@@ -164,68 +164,136 @@ if not df.empty:
     # 直近一年分に限定
     one_year_ago = pd.to_datetime(date.today()-timedelta(days=365))
     df_recent = df[df["日付_dt"] >= one_year_ago]
+    
+    # ------------------精算状況シートの用意----------------
+try:
+    status_sheet = client.open("ガソリン管理").worksheet("精算状況")
+except gspread.exceptions.WorksheetNotFound:
+    status_sheet = client.open("ガソリン管理").add_worksheet(
+        title="精算状況", rows=200, cols=4)
+    status_sheet.append_row(["年月", "利用者", "精算済み", "更新日時"])
 
-    # ------------------月次精算レポート--------------
-    st.header("💰 月次精算レポート")
 
-    sorted_periods = sorted(df["年月"].unique(), reverse=True)
-    for period in sorted_periods:
-        group = df[df["年月"] == period].copy()
-        expanded_flag = (period == sorted_periods[0])
+def get_settle_status(period, user):
+    """指定の年月・利用者が精算済みか確認"""
+    records = status_sheet.get_all_records()
+    for r in records:
+        if str(r["年月"]) == str(period) and r["利用者"] == user:
+            return r["精算済み"] == "済み"
+    return False
 
-        with st.expander(f"📅 {period} の精算", expanded=expanded_flag):
-            # オドメーター不連続チェック
-            group["前回オドメーター終了"] = group["オドメーター終了"].shift(1)
-            group["オドメーター不連続"] = group["オドメーター開始"] != group["前回オドメーター終了"]
-            invalid_rows = group[group["オドメーター不連続"]
-                                 & group["前回オドメーター終了"].notna()]
-            if not invalid_rows.empty:
-                st.warning(f"⚠️ {period} の記録でオドメーターが前回終了値とつながっていない行があります。")
 
-            # 月内データ表示（テーブル）
-            group_display = group.sort_values("日付_dt").copy()
-            group_display.insert(0, "No", range(1, len(group_display)+1))
-            display_cols = ["No", "日付", "利用者", "オドメーター開始",
-                            "オドメーター終了", "走行距離", "給油量", "給油金額"]
-            st.dataframe(group_display[display_cols].style.format({
-                "オドメーター開始": "{:.0f}", "オドメーター終了": "{:.0f}", "走行距離": "{:.0f}",
-                "給油量": "{:.2f}", "給油金額": "{:.0f}"
-            }))
+def update_settle_status(period, user, settled=True):
+    """指定の年月・利用者を精算済みに更新"""
+    records = status_sheet.get_all_records()
+    for idx, r in enumerate(records, start=2):  # 2行目以降データ
+        if str(r["年月"]) == str(period) and r["利用者"] == user:
+            status_sheet.update(
+                f"C{idx}:D{idx}",
+                [["済み" if settled else "未", datetime.now().isoformat() if settled else ""]]
+            )
+            return
+    # 見つからなければ新規追加
+    status_sheet.append_row([
+        str(period),
+        user,
+        "済み" if settled else "未",
+        datetime.now().isoformat() if settled else ""
+    ])
 
-            # 精算サマリー計算
-            total_dist = group["走行距離"].sum()
-            total_price = group["給油金額"].sum()
-            cost_per_km = total_price / total_dist if total_dist > 0 else 0
 
-            # サマリー表示（スマホ向け縦並び）
+# ------------------月次精算レポート--------------
+st.header("💰 月次精算レポート")
+
+sorted_periods = sorted(df["年月"].unique(), reverse=True)
+for period in sorted_periods:
+    group = df[df["年月"] == period].copy()
+    expanded_flag = (period == sorted_periods[0])
+
+    with st.expander(f"📅 {period} の精算", expanded=expanded_flag):
+        # オドメーター不連続チェック
+        group["前回オドメーター終了"] = group["オドメーター終了"].shift(1)
+        group["オドメーター不連続"] = group["オドメーター開始"] != group["前回オドメーター終了"]
+        invalid_rows = group[group["オドメーター不連続"]
+                            & group["前回オドメーター終了"].notna()]
+        if not invalid_rows.empty:
+            st.warning(f"⚠️ {period} の記録でオドメーターが前回終了値とつながっていない行があります。")
+
+        # 月内データ表示（テーブル）
+        group_display = group.sort_values("日付_dt").copy()
+        group_display.insert(0, "No", range(1, len(group_display)+1))
+        display_cols = ["No", "日付", "利用者", "オドメーター開始",
+                        "オドメーター終了", "走行距離", "給油量", "給油金額"]
+        st.dataframe(group_display[display_cols].style.format({
+            "オドメーター開始": "{:.0f}", "オドメーター終了": "{:.0f}", "走行距離": "{:.0f}",
+            "給油量": "{:.2f}", "給油金額": "{:.0f}"
+        }))
+
+        # 精算サマリー計算
+        total_dist = group["走行距離"].sum()
+        total_price = group["給油金額"].sum()
+        cost_per_km = total_price / total_dist if total_dist > 0 else 0
+
+        # サマリー表示（スマホ向け縦並び）
+        st.markdown(f"""
+            <div style="padding:10px; margin:6px 0; border-radius:8px; background-color:#e2eba3;">
+            🚗 <b>合計走行距離:</b> {total_dist} km<br>
+            ⛽ <b>合計給油金額:</b> {total_price:,.0f} 円<br>
+            📊 <b>1kmあたりの金額:</b> {cost_per_km:.2f} 円/km
+            </div>
+        """, unsafe_allow_html=True)
+
+        # ユーザーごとの精算
+        payment = group.groupby("利用者").agg(
+            走行距離=("走行距離", "sum"),
+            給油金額=("給油金額", "sum")
+        ).reset_index()
+        payment["負担額"] = payment["走行距離"] * cost_per_km
+        payment["精算額"] = payment["給油金額"] - payment["負担額"]
+
+        # カード風に1ユーザーずつ表示
+        payment = group.groupby("利用者").agg(
+            走行距離=("走行距離", "sum"),
+            給油金額=("給油金額", "sum")
+        ).reset_index()
+        payment["負担額"] = payment["走行距離"] * cost_per_km
+        payment["精算額"] = payment["給油金額"] - payment["負担額"]
+        
+        # カード風に1ユーザーずつ表示
+        for _, row in payment.iterrows():
+            color = "green" if row["精算額"] > 0 else "red" if row["精算額"] < 0 else "black"
+
+            # 個別の精算状況を取得
+            settled = get_settle_status(period, row["利用者"])
+
+            # 精算済みなら緑系、未なら青系に背景色を変える
+            bg_color = "#d4f7d4" if settled else "#eef7ff"
+
             st.markdown(f"""
-                <div style="padding:10px; margin:6px 0; border-radius:8px; background-color:#e2eba3;">
-                🚗 <b>合計走行距離:</b> {total_dist} km<br>
-                ⛽ <b>合計給油金額:</b> {total_price:,.0f} 円<br>
-                📊 <b>1kmあたりの金額:</b> {cost_per_km:.2f} 円/km
+                <div style="padding:10px; margin:6px 0; border-radius:8px; background-color:{bg_color};">
+                    🙍‍♂️ <b>{row['利用者']}</b><br>
+                    🚗 走行距離: {row['走行距離']} km<br>
+                    💴 給油金額: {row['給油金額']:.0f} 円<br>
+                    📊 負担額: {row['負担額']:.0f} 円<br>
+                    💸 <span style="color:{color};"><b>精算額: {row['精算額']:.0f} 円</b></span><br>
+                    ✅ 精算状況: {"<span style='color:green;'>済み</span>" if settled else "<span style='color:red;'>未</span>"}
                 </div>
             """, unsafe_allow_html=True)
 
-            # ユーザーごとの精算
-            payment = group.groupby("利用者").agg(
-                走行距離=("走行距離", "sum"),
-                給油金額=("給油金額", "sum")
-            ).reset_index()
-            payment["負担額"] = payment["走行距離"] * cost_per_km
-            payment["精算額"] = payment["給油金額"] - payment["負担額"]
+            # ボタン切り替え
+            if settled:
+                if st.button(f"↩️ {row['利用者']} の {period} を未に戻す", key=f"unset_{period}_{row['利用者']}"):
+                    update_settle_status(period, row["利用者"], False)
+                    st.warning(f"{row['利用者']} さんの {period} を未に戻しました（更新してください)")
+                    st.session_state.reload_flag = not st.session_state.reload_flag
+            else:
+                if st.button(f"✅ {row['利用者']} の {period} を精算済みにする", key=f"settle_{period}_{row['利用者']}"):
+                    update_settle_status(period, row["利用者"], True)
+                    st.success(f"{row['利用者']} さんを {period} 精算済みにしました！(更新してください)")
+                    st.session_state.reload_flag = not st.session_state.reload_flag
 
-            # カード風に1ユーザーずつ表示
-            for _, row in payment.iterrows():
-                color = "green" if row["精算額"] > 0 else "red" if row["精算額"] < 0 else "black"
-                st.markdown(f"""
-                    <div style="padding:10px; margin:6px 0; border-radius:8px; background-color:#eef7ff;">
-                        🙍‍♂️ <b>{row['利用者']}</b><br>
-                        🚗 走行距離: {row['走行距離']} km<br>
-                        💴 給油金額: {row['給油金額']:.0f} 円<br>
-                        📊 負担額: {row['負担額']:.0f} 円<br>
-                        💸 <span style="color:{color};"><b>精算額: {row['精算額']:.0f} 円</b></span>
-                    </div>
-                """, unsafe_allow_html=True)
+
+
 
 
 # ------------------編集・削除フォーム----------------
@@ -317,4 +385,3 @@ else:
                         sheet.delete_rows(cell.row)
                         st.warning("記録を削除しました。(更新してください)")
                         st.session_state.reload_flag = not st.session_state.reload_flag
-        
